@@ -263,15 +263,26 @@ void check_locations(std::list<int32_t> locations)
 {
 	std::list<int64_t> checks;
 	std::set<int64_t> missing_locations = ap->get_missing_locations();
+	std::set<int64_t> checks_to_send;
 
-	for (auto& location : locations)
+	// The game reports Param IDs (plus their Param type), while Archipelago
+	// checks use the separate sequential IDs from the world's locations.py.
+	for (const auto& location_key : locations)
 	{
-		if (missing_locations.contains(location))
-		{
-			checks.push_back(static_cast<int64_t>(location));
+		auto mapping = location_key_to_ap_ids.find(location_key);
+		if (mapping == location_key_to_ap_ids.end()) {
+			spdlog::debug("No Archipelago location mapping for game key {}", location_key);
+			continue;
+		}
+
+		for (const auto& ap_location_id : mapping->second) {
+			if (missing_locations.contains(ap_location_id)) {
+				checks_to_send.insert(ap_location_id);
+			}
 		}
 	}
-	
+
+	checks.assign(checks_to_send.begin(), checks_to_send.end());
 	if (!checks.empty()) {
 		ap->LocationChecks(checks);
 	}
