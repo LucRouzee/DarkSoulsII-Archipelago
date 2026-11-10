@@ -111,7 +111,7 @@ void handle_check_locations()
 
     for (int32_t location : locations_to_check) {
         // check if we get reward from nashandra
-        if (location == 627000) {
+        if (location == 200627000) {
             announce_goal_reached();
         }
     }
