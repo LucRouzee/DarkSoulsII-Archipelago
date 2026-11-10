@@ -240,9 +240,6 @@ void init_hooks(std::map<int32_t, std::string> reward_names, std::map<int32_t, i
 
     if (hooks_enabled) return;
 
-    // create the file with the archipelago texture
-    write_binary_file_if_not_exists(ap_texture_tpf, sizeof(ap_texture_tpf), L"archipelago/textures/IC_0060375000.tpf");
-
     MH_Initialize();
 
     #define HOOK(name) \
@@ -252,7 +249,7 @@ void init_hooks(std::map<int32_t, std::string> reward_names, std::map<int32_t, i
     else if (MH_EnableHook((LPVOID)(base_address + function_offsets::name)) != MH_OK) { \
         spdlog::error("error enabling hook {}", #name); \
     } 
-    HOOKS
+    TRACKING_HOOKS
     #undef HOOK
 
     hooks_enabled = true;
