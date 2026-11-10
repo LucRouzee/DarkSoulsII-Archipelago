@@ -51,3 +51,10 @@ typedef size_t(__thiscall* virtual_to_archive_path_t)(uintptr_t, DLString*);
     HOOK(get_item_info) \
     HOOK(get_hovering_item_info) \
     HOOK(virtual_to_archive_path)
+
+// The vanilla-tracking client only needs hooks that observe location rewards.
+// All inventory, item-description, and texture hooks stay disabled.
+#define TRACKING_HOOKS \
+    HOOK(give_items_on_pickup) \
+    HOOK(give_items_on_reward) \
+    HOOK(give_shop_item)
