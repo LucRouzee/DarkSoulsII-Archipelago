@@ -115,7 +115,7 @@ void __fastcall detour_give_items_on_reward(uintptr_t param_1, void* _edx, uintp
 void __cdecl detour_give_items_on_reward(uintptr_t param_1, uintptr_t param_2, int32_t param_3, int32_t param_4, int32_t param_5)
 #endif
 {
-    int32_t itemlot_id = read_value<int32_t>(param_2);
+    int32_t itemlot_id = read_value<int32_t>(param_2) + 200000000; // ItemLotParam2_Other key
     spdlog::debug("was rewarded: {}", itemlot_id);
     handle_location_checked(itemlot_id);
     return original_give_items_on_reward(param_1, param_2, param_3, param_4, param_5);
@@ -130,11 +130,7 @@ char __cdecl detour_give_items_on_pickup(uintptr_t param_1, uintptr_t param_2)
     int32_t itemlot_id = get_pickup_id(param_2, get_base_address());
     spdlog::debug("picked up: {}", itemlot_id);
 
-    // janky way to fix the problem that some pickups
-    // have the same id as some of the shop items
-    if (!shop_prices.contains(itemlot_id)) {
-        handle_location_checked(itemlot_id);
-    }
+    handle_location_checked(itemlot_id);
 
     return original_give_items_on_pickup(param_1, param_2);
 }
@@ -146,7 +142,7 @@ char __cdecl detour_give_shop_item(uintptr_t param_1, uintptr_t param_2, int32_t
 #endif
 {
     uint32_t offset = sizeof(uintptr_t) == 4 ? 0x8 : 0x10; // 0x8 in x32 and 0x10 in x64
-    int32_t shop_lineup_id = read_value<int32_t>(param_2 + offset);
+    int32_t shop_lineup_id = read_value<int32_t>(param_2 + offset) + 300000000; // ShopLineupParam key
     spdlog::debug("just bought: {}", shop_lineup_id);
     handle_location_checked(shop_lineup_id);
     return original_give_shop_item(param_1, param_2, param_3);
