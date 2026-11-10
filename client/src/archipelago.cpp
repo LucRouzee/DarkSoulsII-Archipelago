@@ -2,7 +2,6 @@
 
 #include "patches.h"
 #include "memory.h"
-#include "randomizer.h"
 #include "hooks.h"
 #include "game_functions.h"
 #include "ds2.h"
@@ -19,6 +18,7 @@
 #include <map>
 #include <queue>
 #include <string>
+#include <vector>
 
 #if defined(_M_X64)
 	#define GAME_VERSION 0
@@ -32,14 +32,12 @@ APClient* ap;
 
 std::string room_id_key;
 std::string room_id_value;
-std::string player_seed;
 bool fatal_error = false;
 bool death_link = false;
-bool autoequip = false;
 bool save_loaded = false;
 bool _died_by_deathlink = false;
 int last_received_index = -1;
-std::set<int32_t> locations_to_ignore;
+std::map<int32_t, std::vector<int64_t>> location_key_to_ap_ids;
 std::queue<APClient::NetworkItem> items_to_give;
 
 enum ItemsHandling {
@@ -58,7 +56,7 @@ void reset_apclient()
 	save_loaded = false;
 	_died_by_deathlink = false;
 	last_received_index = 0;
-	locations_to_ignore.clear();
+	location_key_to_ap_ids.clear();
 	while (!items_to_give.empty()) {
 		items_to_give.pop();
 	}
@@ -82,8 +80,30 @@ void setup_apclient(std::string URI, std::string slot_name, std::string password
 	ap->set_slot_connected_handler([](const json& data) {
 		spdlog::debug("received slot data: {}", data.dump());
 
-		// we do this so different players in the same room dont have the same items
-		player_seed = ap->get_seed() + ap->get_player_alias(ap->get_player_number()) + std::to_string(ap->get_team_number());
+        // Map the game's type-qualified location keys to Archipelago's location IDs.
+        location_key_to_ap_ids.clear();
+        if (data.contains("location_data") && data.at("location_data").is_array()) {
+            for (const auto& entry : data.at("location_data")) {
+                if (!entry.contains("location_key") || !entry.contains("archipelago_ids") ||
+                    !entry.at("archipelago_ids").is_array()) {
+                    continue;
+                }
+
+                const int32_t location_key = entry.at("location_key").get<int32_t>();
+                auto& ap_ids = location_key_to_ap_ids[location_key];
+                for (const auto& ap_id : entry.at("archipelago_ids")) {
+                    ap_ids.push_back(ap_id.get<int64_t>());
+                }
+            }
+        }
+
+        if (location_key_to_ap_ids.empty()) {
+            spdlog::error("Slot data is missing Dark Souls II location mappings; refusing to enable check tracking.");
+            fatal_error = true;
+            return;
+        }
+
+        spdlog::info("Loaded {} Dark Souls II location mappings.", location_key_to_ap_ids.size());
 
 		if (data.contains("game_version") && data.at("game_version") != GAME_VERSION) {
 			spdlog::error("The client's game version does not match the version chosen on the yaml file. "
@@ -114,33 +134,14 @@ void setup_apclient(std::string URI, std::string slot_name, std::string password
 		if (data.contains("no_equip_load") && data.at("no_equip_load") == 1) {
 			patch_no_equip_load(base_address);
 		}
-		if (data.contains("autoequip") && data.at("autoequip") == 1) {
-			autoequip = true;
-		}
-
-		locations_to_ignore.insert(1700000); // estus flask from emerald herald
-		if (data.contains("infinite_lifegems") && data.at("infinite_lifegems") == 1) {
-			locations_to_ignore.insert(75400601);
-		}
-
-		if (data.contains("randomize_starting_loadout") && data.at("randomize_starting_loadout") == 1) {
-			if (data.contains("starting_weapon_requirement")) {
-				ClassRandomizationFlag flag = static_cast<ClassRandomizationFlag>(data.at("starting_weapon_requirement"));
-				randomize_starter_classes(player_seed, flag);
-			}
-		}
-
 		// we store an uuid we create in the server's data storage
 		// this allows us to have an unique identifier for each room
 		room_id_key = "roomid_" + std::to_string(ap->get_team_number()) + "_" + ap->get_slot();
 		ap->Get({ room_id_key });
 
-		std::list<int64_t> locationsList;
-		std::set<int64_t> missingLocations = ap->get_missing_locations();
-		std::set<int64_t> checkedLocations = ap->get_checked_locations();
-		locationsList.insert(locationsList.end(), checkedLocations.begin(), checkedLocations.end());
-		locationsList.insert(locationsList.end(), missingLocations.begin(), missingLocations.end());
-		ap->LocationScouts(locationsList);
+        // The game must keep its original Param rewards. Install only the
+        // hooks that detect pickups, boss rewards, and shop purchases.
+        init_hooks({}, {}, false);
 	});
 
 	ap->set_slot_refused_handler([](const std::list<std::string>& errors) {
@@ -173,36 +174,6 @@ void setup_apclient(std::string URI, std::string slot_name, std::string password
 		// it's a shitty solution to the fact that
 		// we get items before the save is loaded
 		ap->Sync();
-	});
-
-	ap->set_location_info_handler([](const std::list<APClient::NetworkItem>& items) {
-		std::map<int32_t, int32_t> location_rewards;
-		std::map<int32_t, int32_t> custom_items;
-		std::map<int32_t, std::string> reward_names;
-		for (const auto& item : items) {
-			if (item.player == ap->get_player_number()) {
-				// if the id is less than 1000000 it's a custom item
-				if (item.item < 1000000) {
-					location_rewards[item.location] = the_item_id;
-					custom_items[item.location] = item.item;
-
-					std::string item_name = ap->get_item_name(item.item, ap->get_player_game(item.player));
-					reward_names[item.location] = item_name;
-				}
-				else {
-					location_rewards[item.location] = item.item;
-				}
-			}
-			else {
-				location_rewards[item.location] = the_item_id;
-
-				std::string player_name = ap->get_player_alias(item.player);
-				std::string item_name = ap->get_item_name(item.item, ap->get_player_game(item.player));
-				reward_names[item.location] = player_name + "'s " + item_name;
-			}
-		}
-		override_item_params(location_rewards, player_seed, locations_to_ignore);
-		init_hooks(reward_names, custom_items, autoequip);
 	});
 
 	ap->set_items_received_handler([](const std::list<APClient::NetworkItem>& received_items) {
